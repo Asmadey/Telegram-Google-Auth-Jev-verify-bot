@@ -125,10 +125,17 @@ async def on_group_message(message: Message, ctx: Ctx) -> None:
                  user.id if user else None, message.sender_chat.id if message.sender_chat else None)
         return
     member = await db.get_member(ctx.pool, user.id)
-    if member is None or member["status"] != "pending":
-        # не новичок (был в группе до бота или вступил, пока бот не работал) или уже подтверждён
-        log.info("пропуск: пользователь %s не в очереди проверки (%s)", user.id,
-                 member["status"] if member else "нет в базе")
+    if member is None:
+        # не новичок (был в группе до бота или вступил, пока бот не работал): проверку Google не требуем,
+        # но явный спам и рекламу модель всё равно отсекает
+        verdict = await _screen_for_spam(ctx, message, user)
+        if verdict is not None and verdict.should_block(ctx.settings.spam_threshold):
+            await service.block_spammer(ctx, message, verdict)
+        else:
+            log.info("пропуск: пользователь %s не в базе, спама не найдено", user.id)
+        return
+    if member["status"] != "pending":
+        log.info("пропуск: пользователь %s не в очереди проверки (%s)", user.id, member["status"])
         return
 
     if await db.has_active_session(ctx.pool, user.id):

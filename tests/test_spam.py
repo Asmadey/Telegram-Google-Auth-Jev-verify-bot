@@ -212,3 +212,17 @@ async def test_after_timeout_next_message_is_screened_again(ctx, screening):
     await post(ctx, "теперь это уже спам", message_id=20)
     assert screening.calls == ["первое", "теперь это уже спам"]
     assert ctx.bot.of("ban")
+
+
+async def test_spam_from_untracked_member_is_deleted_and_banned(ctx, screening):
+    screening.verdict = spam.Verdict(0.97, "advertising")
+    msg = await post(ctx, "Нейросети без переплаты. Бонус $500: https://t.me/somebot", user_id=77)
+    assert msg.deleted is False or ("delete", CHAT_ID, 10) in ctx.bot.of("delete")
+    assert ctx.bot.of("ban")
+    assert not ctx.bot.of("send")
+
+
+async def test_clean_message_from_untracked_member_is_left_alone(ctx, screening):
+    await post(ctx, "Где купить подписку?", user_id=77)
+    assert screening.calls == ["Где купить подписку?"]
+    assert not ctx.bot.of("ban") and not ctx.bot.of("send")
