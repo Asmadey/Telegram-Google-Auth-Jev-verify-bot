@@ -116,9 +116,9 @@ async def _run_timer(ctx: Ctx, session_id: uuid.UUID, last_rendered: int | None)
                 )
                 last_rendered = remaining
             await asyncio.sleep(TICK_SEC)
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # pylint: disable=try-except-raise  # отмену не логируем как сбой
         raise
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught  # сбой таймера не должен ронять бота
         log.exception("Сбой таймера сессии %s", session_id)
     finally:
         if ctx.timers.get(key) is asyncio.current_task():

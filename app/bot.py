@@ -198,7 +198,7 @@ async def _record_screening(ctx: Ctx, message: Message, user, verdict, blocked: 
             content_type=_content_type_name(message),
             text=text, has_link=spam.has_links(message), verdict=verdict, decision=decision,
         )
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught  # журнал не должен мешать модерации
         log.exception("Не удалось записать проверку сообщения в журнал")
 
 

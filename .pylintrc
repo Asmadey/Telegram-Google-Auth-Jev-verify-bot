@@ -1,0 +1,9 @@
+[MASTER]
+ignore=tests
+
+[MESSAGES CONTROL]
+# Стиль проекта: короткие модули без обязательных docstring, длинные строки до 120 допустимы
+disable=missing-module-docstring,missing-function-docstring,missing-class-docstring,too-few-public-methods,too-many-return-statements,too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-instance-attributes,import-outside-toplevel,logging-fstring-interpolation
+
+[FORMAT]
+max-line-length=120

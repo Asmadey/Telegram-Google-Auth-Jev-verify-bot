@@ -34,7 +34,7 @@ def _exit_if_polling_failed(task: asyncio.Task) -> None:
 
 
 @asynccontextmanager
-async def lifespan(app):
+async def lifespan(app):  # pylint: disable=redefined-outer-name
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
 
@@ -44,7 +44,8 @@ async def lifespan(app):
             await db.migrate(pool, MIGRATIONS_DIR)
         elif not await db.schema_ready(pool):
             raise RuntimeError(
-                "Схема базы не применена, а автоматические миграции отключены (RUN_MIGRATIONS=0). Уберите переменную или примените migrations/*.sql вручную."
+                "Схема базы не применена, а автоматические миграции отключены (RUN_MIGRATIONS=0). "
+                "Уберите переменную или примените migrations/*.sql вручную."
             )
 
         bot = Bot(settings.bot_token)
