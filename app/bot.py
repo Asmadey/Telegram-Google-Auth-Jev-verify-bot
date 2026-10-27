@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 router = Router()
 
 GONE = {"left", "kicked"}
+TELEGRAM_SERVICE_ID = 777000  # служебный аккаунт Telegram: от его имени приходят автопересылки из канала
 
 # Служебные сообщения Telegram («X вступил», «закреплено» и т. п.): они не считаются первым сообщением.
 # Всё остальное, включая неизвестные и новые типы (story, платное медиа, кубик, игра, розыгрыш...),
@@ -124,12 +125,16 @@ async def on_group_message(message: Message, ctx: Ctx) -> None:
         log.info("пропуск: отправитель бот или канал (from=%s sender_chat=%s)",
                  user.id if user else None, message.sender_chat.id if message.sender_chat else None)
         return
+    if user.id == TELEGRAM_SERVICE_ID or getattr(message, "is_automatic_forward", False):
+        return  # автопересылка поста канала в группу обсуждений: не сообщение участника
     member = await db.get_member(ctx.pool, user.id)
     if member is None:
         # не новичок (был в группе до бота или вступил, пока бот не работал): проверку Google не требуем,
         # но явный спам и рекламу модель всё равно отсекает
         verdict = await _screen_for_spam(ctx, message, user)
-        if verdict is not None and verdict.should_block(ctx.settings.spam_threshold):
+        blocked = verdict is not None and verdict.should_block(ctx.settings.spam_threshold)
+        await _record_screening(ctx, message, user, verdict, blocked)
+        if blocked:
             await service.block_spammer(ctx, message, verdict)
         else:
             log.info("пропуск: пользователь %s не в базе, спама не найдено", user.id)
@@ -143,7 +148,9 @@ async def on_group_message(message: Message, ctx: Ctx) -> None:
         return
 
     verdict = await _screen_for_spam(ctx, message, user)
-    if verdict is not None and verdict.should_block(ctx.settings.spam_threshold):
+    blocked = verdict is not None and verdict.should_block(ctx.settings.spam_threshold)
+    await _record_screening(ctx, message, user, verdict, blocked)
+    if blocked:
         await service.block_spammer(ctx, message, verdict)
         return
 
@@ -176,3 +183,25 @@ async def _screen_for_spam(ctx: Ctx, message: Message, user):
         log.info("антиспам: user=%s block_p=%.2f category=%s", user.id, verdict.block_probability,
                  verdict.category)
     return verdict
+
+
+async def _record_screening(ctx: Ctx, message: Message, user, verdict, blocked: bool) -> None:
+    """Пишет в журнал текст и решение модели. Сбой записи не должен мешать модерации."""
+    text = message.text or message.caption
+    if not text or not text.strip():
+        return
+    decision = "blocked" if blocked else ("passed" if verdict is not None else "unchecked")
+    try:
+        await db.add_screened_message(
+            ctx.pool, chat_id=message.chat.id, user_id=user.id, username=user.username,
+            first_name=user.first_name, message_id=message.message_id,
+            content_type=_content_type_name(message),
+            text=text, has_link=spam.has_links(message), verdict=verdict, decision=decision,
+        )
+    except Exception:
+        log.exception("Не удалось записать проверку сообщения в журнал")
+
+
+def _content_type_name(message: Message) -> str | None:
+    kind = getattr(message, "content_type", None)
+    return str(getattr(kind, "value", kind)) if kind is not None else None

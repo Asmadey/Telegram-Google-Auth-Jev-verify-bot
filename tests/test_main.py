@@ -64,4 +64,4 @@ async def test_run_migrations_flag_creates_schema(env, pool, monkeypatch):
     monkeypatch.setenv("RUN_MIGRATIONS", "1")
     async with main.lifespan(main.app):
         pass
-    assert await pool.fetchval("SELECT count(*) FROM schema_migrations") == 1
+    assert await pool.fetchval("SELECT count(*) FROM schema_migrations") == 2

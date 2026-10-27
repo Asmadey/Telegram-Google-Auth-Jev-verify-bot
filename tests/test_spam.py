@@ -226,3 +226,58 @@ async def test_clean_message_from_untracked_member_is_left_alone(ctx, screening)
     await post(ctx, "Где купить подписку?", user_id=77)
     assert screening.calls == ["Где купить подписку?"]
     assert not ctx.bot.of("ban") and not ctx.bot.of("send")
+
+
+# ---------- журнал проверок ----------
+async def rows(ctx):
+    return await ctx.pool.fetch("SELECT * FROM screened_messages ORDER BY id")
+
+
+async def test_blocked_and_passed_messages_are_logged_with_text_and_verdict(ctx, screening):
+    await join(ctx, 1)
+    await join(ctx, 2)
+    screening.verdict = spam.Verdict(0.97, "scam")
+    await post(ctx, "Бонус $500: https://t.me/bot", user_id=1, message_id=10)
+    screening.verdict = spam.Verdict(0.02, "normal")
+    await post(ctx, "Где купить подписку?", user_id=2, message_id=11)
+    blocked, passed = await rows(ctx)
+    assert (blocked["decision"], blocked["user_id"], blocked["text"]) == ("blocked", 1, "Бонус $500: https://t.me/bot")
+    assert blocked["category"] == "scam" and blocked["block_probability"] == pytest.approx(0.97)
+    assert (passed["decision"], passed["user_id"], passed["username"]) == ("passed", 2, "nick")
+
+
+async def test_untracked_member_message_is_logged_too(ctx, screening):
+    await post(ctx, "Привет всем", user_id=77)
+    (row,) = await rows(ctx)
+    assert row["decision"] == "passed" and row["user_id"] == 77
+
+
+async def test_outage_is_logged_as_unchecked(ctx, screening):
+    screening.verdict = None
+    await join(ctx)
+    await post(ctx, "что угодно")
+    (row,) = await rows(ctx)
+    assert row["decision"] == "unchecked" and row["block_probability"] is None
+
+
+async def test_messages_without_text_and_extra_messages_are_not_logged(ctx, screening):
+    await join(ctx)
+    await post(ctx, None)  # без текста: модель не зовём
+    assert await rows(ctx) == []
+
+
+async def test_telegram_service_account_forwards_are_ignored(ctx, screening):
+    msg = FakeMessage(make_user(777000, "tg"), 5, text="Пост канала")
+    msg.is_automatic_forward = True
+    await bot_handlers.on_group_message(msg, ctx)
+    assert screening.calls == [] and await rows(ctx) == []
+
+
+async def test_log_failure_does_not_break_moderation(ctx, screening, monkeypatch):
+    async def boom(*a, **kw):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(db, "add_screened_message", boom)
+    screening.verdict = spam.Verdict(0.97, "scam")
+    await join(ctx)
+    await post(ctx, "спам")
+    assert ctx.bot.of("ban")

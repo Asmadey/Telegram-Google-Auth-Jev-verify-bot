@@ -45,6 +45,18 @@ async def add_event(pool, type_: str, *, chat_id=None, user_id=None, session_id=
     )
 
 
+async def add_screened_message(pool, *, chat_id, user_id, username, first_name, message_id, content_type,
+                               text, has_link, verdict, decision):
+    """Журнал проверок моделью. decision: blocked / passed / unchecked (модель недоступна или выключена)."""
+    await pool.execute(
+        """INSERT INTO screened_messages (chat_id, user_id, username, first_name, message_id, content_type,
+                                          text, has_link, block_probability, category, decision)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
+        chat_id, user_id, username, first_name, message_id, content_type, text, has_link,
+        verdict.block_probability if verdict else None, verdict.category if verdict else None, decision,
+    )
+
+
 # ---------- участники ----------
 async def upsert_member_joined(pool, user_id: int, chat_id: int, username, first_name):
     """Новичок -> pending. Уже подтверждённый при повторном вступлении остаётся verified."""
