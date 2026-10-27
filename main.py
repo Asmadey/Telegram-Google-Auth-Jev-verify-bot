@@ -44,7 +44,7 @@ async def lifespan(app):
             await db.migrate(pool, MIGRATIONS_DIR)
         elif not await db.schema_ready(pool):
             raise RuntimeError(
-                "Схема базы не применена. Один раз запустите сервис с RUN_MIGRATIONS=1, затем уберите переменную."
+                "Схема базы не применена, а автоматические миграции отключены (RUN_MIGRATIONS=0). Уберите переменную или примените migrations/*.sql вручную."
             )
 
         bot = Bot(settings.bot_token)

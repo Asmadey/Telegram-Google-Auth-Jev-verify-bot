@@ -45,7 +45,7 @@ def load_settings() -> Settings:
         port=int(os.environ.get("PORT", "8000")),
         verify_timeout_sec=int(os.environ.get("VERIFY_TIMEOUT_SEC", "60")),
         max_failed_attempts=int(os.environ.get("MAX_FAILED_ATTEMPTS", "3")),
-        run_migrations=os.environ.get("RUN_MIGRATIONS", "") == "1",
+        run_migrations=os.environ.get("RUN_MIGRATIONS", "1").strip().lower() not in ("0", "false", "no", "off"),
         openrouter_api_key=os.environ.get("OPENROUTER_API_KEY", "").strip() or None,
         spam_model=os.environ.get("SPAM_MODEL", "typesafe/jev-1.13"),
         spam_threshold=float(os.environ.get("SPAM_THRESHOLD", "0.8")),

@@ -30,7 +30,7 @@ def env(monkeypatch, pool):
         "PUBLIC_BASE_URL": "https://app.test", "SECRET_KEY": "k" * 32,
     }.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.delenv("RUN_MIGRATIONS", raising=False)
+    monkeypatch.delenv("RUN_MIGRATIONS", raising=False)  # по умолчанию миграции включены
 
     async def forever(self, *args, **kwargs):
         await asyncio.Event().wait()
@@ -50,18 +50,24 @@ async def test_main_app_starts_serves_health_and_stops(env):
             assert (await client.get("/health")).json() == {"ok": True}
 
 
-async def test_start_fails_clearly_when_schema_missing(env, pool):
+async def test_start_fails_clearly_when_migrations_disabled_and_schema_missing(env, pool, monkeypatch):
     async with pool.acquire() as conn:
         await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-    with pytest.raises(RuntimeError, match="RUN_MIGRATIONS=1"):
+    monkeypatch.setenv("RUN_MIGRATIONS", "0")
+    with pytest.raises(RuntimeError, match="RUN_MIGRATIONS=0"):
         async with main.lifespan(main.app):
             pass
 
 
-async def test_run_migrations_flag_creates_schema(env, pool, monkeypatch):
+async def test_empty_database_gets_all_tables_by_default(env, pool):
     async with pool.acquire() as conn:
         await conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public;")
-    monkeypatch.setenv("RUN_MIGRATIONS", "1")
     async with main.lifespan(main.app):
+        pass
+    tables = {r["tablename"] for r in await pool.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")}
+    assert {"members", "sessions", "oauth_states", "google_identities", "events", "screened_messages"} <= tables
+    assert await pool.fetchval("SELECT count(*) FROM schema_migrations") == 2
+    bot_router._parent_router = None
+    async with main.lifespan(main.app):  # повторный старт безопасен
         pass
     assert await pool.fetchval("SELECT count(*) FROM schema_migrations") == 2

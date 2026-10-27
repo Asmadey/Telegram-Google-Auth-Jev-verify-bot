@@ -39,9 +39,48 @@ Jev возвращает не текст, а типизированное реш
 | OAuth-клиент | создан в проекте **Firebase** (Google Cloud) | удобно управлять из консоли; Firebase SDK и Firestore в рантайме не используются |
 | База | PostgreSQL (asyncpg) | участники, сессии, одноразовые state, привязки Google, журнал событий |
 | Хостинг | **Railway**, автодеплой из GitHub | один сервис + база; настройки как код в `.railway/railway.ts` |
-| Миграции | нумерованные SQL, только вперёд | применяются по флагу `RUN_MIGRATIONS=1` |
+| Миграции | нумерованные SQL, только вперёд | применяются сами при старте (`migrations/*.sql`), отключаются `RUN_MIGRATIONS=0` |
 
 Рассматривали и отказались: Firebase Functions и Firestore (нужен платный план, посекундный таймер неудобен), n8n (лишний слой), webhook вместо polling (публичный адрес и холодные старты без выгоды).
+
+## База данных
+
+Схема создаётся миграциями [0001_init.sql](migrations/0001_init.sql) и [0002_screened_messages.sql](migrations/0002_screened_messages.sql). Применённые версии записаны в `schema_migrations`.
+
+| Таблица | Что хранит | Ключевые колонки |
+|---|---|---|
+| `members` | участники группы и их статус | `user_id`, `chat_id`, `username`, `first_name`, `status` (`pending` / `verified` / `failed` / `left`), `joined_at`, `verified_at` |
+| `sessions` | попытки проверки на 60 секунд | `id`, `user_id`, `status` (`waiting` / `verified` / `expired`), `trigger_message_id`, `prompt_message_id`, `deadline`, `finished_at` |
+| `oauth_states` | одноразовые `state` для входа через Google | `state`, `session_id`, `user_id`, `status` (`new` / `used`), `expires_at` |
+| `google_identities` | привязка Google-аккаунта к участнику | `google_sub_hash` (HMAC, не сам ID), `user_id`, `verified_at` |
+| `events` | журнал: вступил, вышел, запрос, вход, бан, блокировка спама | `type`, `user_id`, `session_id`, `payload` (JSONB), `created_at` |
+| `screened_messages` | **сообщения, которые проверила модель Jev, и её решение** | см. ниже |
+
+### `screened_messages`: что блокируется и что проходит
+
+На каждое сообщение с текстом (или подписью к фото) от новичка или от участника, которого нет в базе, бот пишет одну строку:
+
+| Колонка | Тип | Значение |
+|---|---|---|
+| `id` | bigserial | номер записи |
+| `created_at` | timestamptz | когда проверено |
+| `chat_id`, `message_id` | bigint | где и какое сообщение |
+| `user_id`, `username`, `first_name` | bigint, text | автор |
+| `content_type` | text | `text`, `photo` и т. д. |
+| `text` | text | полный текст сообщения |
+| `has_link` | boolean | была ли в нём ссылка |
+| `block_probability` | double | вероятность «блокировать» от Jev (0..1); пусто, если модель недоступна |
+| `category` | text | `normal` / `advertising` / `spam` / `scam` |
+| `decision` | text | `blocked` (удалено, автор заблокирован), `passed` (прошло дальше) или `unchecked` (модель недоступна или выключена) |
+
+Запрос для просмотра:
+
+```sql
+SELECT created_at, decision, round(block_probability::numeric, 2) AS p, category, user_id, username, left(text, 120) AS text
+FROM screened_messages ORDER BY created_at DESC LIMIT 50;
+```
+
+Сообщения без текста (стикеры, фото без подписи) в журнал не попадают: модель их не получает. Запись в журнал не влияет на модерацию: если она не удалась, сообщение всё равно удаляется, а автор блокируется.
 
 ## Безопасность
 
@@ -52,11 +91,17 @@ Jev возвращает не текст, а типизированное реш
 
 ## Запуск
 
+Нужен PostgreSQL. Локально его поднимает `docker compose`, на Railway хватает плагина Postgres.
+
 ```bash
+docker compose up -d                          # локальный PostgreSQL (пользователь bot, база antispam)
 pip install -r requirements.txt
 # задать переменные окружения из .env.example (BOT_TOKEN, CHAT_ID, DATABASE_URL, GOOGLE_*, ...)
-RUN_MIGRATIONS=1 python main.py   # первый запуск создаёт таблицы
+# локальный адрес базы: postgresql://bot:bot@127.0.0.1:5432/antispam
+python main.py                                # при старте сам создаёт все таблицы
 ```
+
+Ничего вручную создавать не нужно: при каждом старте бот применяет недостающие файлы из [migrations/](migrations/) (пустая база получит все таблицы, на готовой ничего не изменится). Отключить можно переменной `RUN_MIGRATIONS=0`.
 
 Бот читает только переменные окружения (файл `.env` сам не загружается): на Railway их задают в Variables сервиса.
 

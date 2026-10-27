@@ -13,24 +13,31 @@ async def create_pool(database_url: str) -> asyncpg.Pool:
     return await asyncpg.create_pool(database_url, min_size=1, max_size=5)
 
 
+MIGRATION_LOCK_ID = 727001  # advisory lock: два экземпляра при деплое не применяют миграции одновременно
+
+
 async def migrate(pool: asyncpg.Pool, directory: Path) -> list[str]:
     """Применяет по порядку непримененные файлы *.sql. Только вперёд, повторно не запускает."""
     applied_now: list[str] = []
     async with pool.acquire() as conn:
-        await conn.execute(
-            """CREATE TABLE IF NOT EXISTS schema_migrations (
-                   version TEXT PRIMARY KEY,
-                   applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"""
-        )
-        done = {r["version"] for r in await conn.fetch("SELECT version FROM schema_migrations")}
-        for path in sorted(directory.glob("*.sql")):
-            if path.name in done:
-                continue
-            async with conn.transaction():
-                await conn.execute(path.read_text(encoding="utf-8"))
-                await conn.execute("INSERT INTO schema_migrations (version) VALUES ($1)", path.name)
-            log.info("Применена миграция %s", path.name)
-            applied_now.append(path.name)
+        await conn.execute("SELECT pg_advisory_lock($1)", MIGRATION_LOCK_ID)
+        try:
+            await conn.execute(
+                """CREATE TABLE IF NOT EXISTS schema_migrations (
+                       version TEXT PRIMARY KEY,
+                       applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"""
+            )
+            done = {r["version"] for r in await conn.fetch("SELECT version FROM schema_migrations")}
+            for path in sorted(directory.glob("*.sql")):
+                if path.name in done:
+                    continue
+                async with conn.transaction():
+                    await conn.execute(path.read_text(encoding="utf-8"))
+                    await conn.execute("INSERT INTO schema_migrations (version) VALUES ($1)", path.name)
+                log.info("Применена миграция %s", path.name)
+                applied_now.append(path.name)
+        finally:
+            await conn.execute("SELECT pg_advisory_unlock($1)", MIGRATION_LOCK_ID)
     return applied_now
 
 
